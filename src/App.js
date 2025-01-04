@@ -15,31 +15,119 @@ class App extends Component {
         campaigns: [], // List of campaigns
         newCampaign: {title: '', pledgeCost: '', numberOfPledges: ''},
         newOwner: '',
+        hasRefunds: false,
+        eventsTriggered: false,
     };
+
+    updateInfo = async () => {
+        const accounts = await window.ethereum.request({method: 'eth_requestAccounts'});
+        const owner = await contract.methods.owner().call();
+        const balance = await web3.eth.getBalance(contract.options.address);
+        const collectedFees = await contract.methods.totalFeesCollected().call();
+
+        await this.checkRefunds(accounts[0]);
+
+        this.setState({
+            currentAccount: accounts[0],
+            owner,
+            balance: web3.utils.fromWei(balance, 'ether'),
+            collectedFees: web3.utils.fromWei(collectedFees, 'ether'),
+        });
+
+        window.ethereum.on('accountsChanged', this.handleAccountChange);
+
+        await this.loadCampaigns();
+    }
 
     // Lifecycle method to load data from the contract
     async componentDidMount() {
         try {
-            const accounts = await window.ethereum.request({method: 'eth_requestAccounts'});
-            const owner = await contract.methods.owner().call();
-            const balance = await web3.eth.getBalance(contract.options.address);
-            const collectedFees = await contract.methods.totalFeesCollected().call();
-
-            this.setState({
-                currentAccount: accounts[0],
-                owner,
-                balance: web3.utils.fromWei(balance, 'ether'),
-                collectedFees: web3.utils.fromWei(collectedFees, 'ether'),
-            });
-            await this.loadCampaigns();
+            await this.updateInfo();
+            if (!this.state.eventsTriggered) {
+                this.setupEventListeners();
+                this.setState({eventsTriggered: true});
+            }
         } catch (error) {
             console.error("Error loading contract data:", error);
         }
+    }
 
-        window.ethereum.on('accountsChanged', (accounts) => {
+    setupEventListeners() {
+        // Listen for account change
+        window.ethereum.on('accountsChanged', async(accounts) => {
             this.setState({currentAccount: accounts[0]});
+            await this.checkRefunds(accounts[0]);
+            await this.loadCampaigns();
+        });
+
+        // Listen for campaign creation
+        contract.events.CampaignCreated().on('data',async (data) => {
+            console.log('New campaign created:', data);
+            await this.updateInfo();
+        });
+
+        // Listen for campaign funding
+        contract.events.SharesPurchased().on('data',async (data) => {
+            console.log('Shares purchased:', data);
+            await this.updateInfo();
+        });
+
+        // Listen for campaign cancellation
+        contract.events.CampaignCancelled().on('data',async (data) => {
+            console.log('Campaign cancelled:', data);
+            await this.updateInfo();
+        });
+
+        // Listen for campaign completion
+        contract.events.CampaignCompleted().on('data',async (data) => {
+            console.log('Campaign completed:', data);
+            await this.updateInfo();
+        });
+
+        // Listen for refund
+        contract.events.InvestorRefunded().on('data',async (data) => {
+            console.log('Refund:', data);
+            await this.updateInfo();
+        });
+
+        // Listen for fee withdrawal
+        contract.events.FeesWithdrawn().on('data',async (data) => {
+            console.log('Fees withdrawn:', data);
+            await this.updateInfo();
+        });
+
+        // Listen for owner change
+        contract.events.ChangeOwner().on('data',async (data) => {
+            console.log('Owner changed:', data);
+            await this.updateInfo();
+        });
+
+        // Listen for entrepreneur ban
+        contract.events.BanEntrepreneur().on('data',async (data) => {
+            console.log('Entrepreneur banned:', data);
+            await this.updateInfo();
+        });
+
+        // Listen for contract destruction
+        contract.events.DestroyContract().on('data',async (data) => {
+            console.log('Contract destroyed:', data);
+            await this.updateInfo();
         });
     }
+
+    // Handle account change
+    handleAccountChange = async() => {
+        const accounts = await window.ethereum.request({method: 'eth_requestAccounts'});
+        this.setState({currentAccount: accounts[0]});
+        await this.checkRefunds(accounts[0]);
+        await this.loadCampaigns();
+    }
+
+    // Check if there are refunds available
+    checkRefunds = async (account) => {
+        const refunds = await contract.methods.refunds(account).call();
+        this.setState({hasRefunds: refunds > 0});
+    };
 
     // Load the campaigns from the contract
     loadCampaigns = async () => {
@@ -103,6 +191,7 @@ class App extends Component {
     }
 
     completeCampaign = async (campaignId) => {
+        console.log("Completing campaign:", campaignId);
         try {
             await contract.methods
                 .completeCampaign(campaignId)
@@ -133,6 +222,7 @@ class App extends Component {
             alert(`Refund successful for investor: ${currentAccount}`);
             this.setState({investorAddress: "", message: ""});
 
+            await this.checkRefunds(currentAccount);
             await this.loadCampaigns(); // Reload campaigns to update the state
         } catch (error) {
             console.error("Error refunding investor:", error.message || error);
@@ -152,7 +242,7 @@ class App extends Component {
                     <td>{campaign.currentShares}/{campaign.totalShares}</td>
                     <td>{campaign.isActive ? 'Active' : campaign.isCompleted ? 'Completed' : 'Canceled'}</td>
                     {
-                        !campaign.isCancelled || !campaign.isCompleted &&
+                        (!campaign.isCancelled && !campaign.isCompleted) &&
                         <td className={`d-flex gap-2 h-auto`}>
                             {
                                 campaign.isActive &&
@@ -164,7 +254,9 @@ class App extends Component {
                                 </button>
                             }
                             {
-                                campaign.isActive &&
+                                (campaign.isActive &&
+                                    (campaign.entrepreneur.toLowerCase() === this.state.currentAccount.toLowerCase() ||
+                                        this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase())) &&
                                 <button
                                     className="btn btn-danger btn-sm"
                                     onClick={async () => await this.cancelCampaign(campaign.id)}
@@ -173,7 +265,11 @@ class App extends Component {
                                 </button>
                             }
                             {
-                                (campaign.currentShares === campaign.totalShares) && campaign.isActive &&
+                                (campaign.isActive &&
+                                    (campaign.currentShares >= campaign.totalShares) &&
+                                        (campaign.entrepreneur.toLowerCase() === this.state.currentAccount.toLowerCase() ||
+                                            this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()))
+                                &&
                                 <button
                                     className="btn btn-info btn-sm"
                                     onClick={async () => await this.completeCampaign(campaign.id)}
@@ -201,11 +297,12 @@ class App extends Component {
     }
 
     render() {
+        console.log(this.state);
         const {currentAccount, owner, balance, collectedFees, campaigns} = this.state;
 
         const currentAccountShortened = currentAccount ? `${currentAccount.slice(0, 6)}...${currentAccount.slice(-4)}` : '';
         return (
-            <div className="">
+            <div className="max-vh-100">
                 <nav
                     className="navbar navbar-expand-lg text-white p-2 d-flex top-nav align-items-center justify-content-between">
                     <header className={`pink-white`}>
@@ -234,41 +331,44 @@ class App extends Component {
                     </section>
                 </nav>
                 <main className={'row p-5 gap-5'}>
-                    <section className={`col-md-auto create-campaign`}>
-                        <header className={`text-center`}>
-                            <h2 className={`fs-4 gradient-text`}>Campaign Creation</h2>
-                            <h4 className={`fs-6 white`}>Create your own campaign in seconds</h4>
-                        </header>
-                        <form className={`d-flex flex-column align-items-center`} onSubmit={
-                            async (e) => {
-                                e.preventDefault();
-                                const newCampaign = {
-                                    title: document.getElementById('title').value,
-                                    pledgeCost: document.getElementById('pledgeCost').value,
-                                    numberOfPledges: document.getElementById('numOfPledges').value
-                                };
-                                console.log('Creating campaign:', newCampaign);
+                    {
+                        this.state.currentAccount.toLowerCase() !== this.state.owner.toLowerCase() &&
+                            <section className={`col-md-auto create-campaign`}>
+                                <header className={`text-center`}>
+                                    <h2 className={`fs-4 gradient-text`}>Campaign Creation</h2>
+                                    <h4 className={`fs-6 white`}>Create your own campaign in seconds</h4>
+                                </header>
+                                <form className={`d-flex flex-column align-items-center`} onSubmit={
+                                    async (e) => {
+                                        e.preventDefault();
+                                        const newCampaign = {
+                                            title: document.getElementById('title').value,
+                                            pledgeCost: document.getElementById('pledgeCost').value,
+                                            numberOfPledges: document.getElementById('numOfPledges').value
+                                        };
+                                        console.log('Creating campaign:', newCampaign);
 
-                                this.setState({newCampaign});
+                                        this.setState({newCampaign});
 
-                                await this.createCampaign(newCampaign);
-                            }
-                        }>
-                            <div className="mb-3">
-                                <label htmlFor="exampleInputEmail1" className="form-label">Title</label>
-                                <input type="text" className="form-control" id="title" placeholder={'Campaign 1'}/>
-                            </div>
-                            <div className="mb-3">
-                                <label htmlFor="pledgeCost" className="form-label">Pledge Cost</label>
-                                <input type="text" className="form-control" id="pledgeCost" placeholder={"10000"}/>
-                            </div>
-                            <div className="mb-3">
-                                <label htmlFor="numOfPledges" className="form-label">Number of Pledges</label>
-                                <input type="text" className="form-control" id="numOfPledges" placeholder={"200"}/>
-                            </div>
-                            <button type="submit" className="btn btn-light">Create</button>
-                        </form>
-                    </section>
+                                        await this.createCampaign(newCampaign);
+                                    }
+                                }>
+                                    <div className="mb-3">
+                                        <label htmlFor="exampleInputEmail1" className="form-label">Title</label>
+                                        <input type="text" className="form-control" id="title" placeholder={'Campaign 1'}/>
+                                    </div>
+                                    <div className="mb-3">
+                                        <label htmlFor="pledgeCost" className="form-label">Pledge Cost</label>
+                                        <input type="text" className="form-control" id="pledgeCost" placeholder={"10000"}/>
+                                    </div>
+                                    <div className="mb-3">
+                                        <label htmlFor="numOfPledges" className="form-label">Number of Pledges</label>
+                                        <input type="text" className="form-control" id="numOfPledges" placeholder={"200"}/>
+                                    </div>
+                                    <button type="submit" className="btn btn-light">Create</button>
+                                </form>
+                            </section>
+                    }
                     <section className={'col custom-table'}>
                         <h3 className={'pink-white'}>Live Campaigns</h3>
                         <table className="table table-dark table-hover">
@@ -304,7 +404,7 @@ class App extends Component {
                         <header className={`d-flex gap-2 mb-2`}>
                             <h3 className={'pink-white'}>Canceled Campaigns</h3>
                             <button
-                                className="btn btn-light btn-sm"
+                                className={`${!this.state.hasRefunds ? 'disabled' : ''} btn btn-light btn-sm`}
                                 onClick={async () => await this.refundInvestor()}
                             >
                                 Claim
@@ -321,7 +421,7 @@ class App extends Component {
                             </tr>
                             </thead>
                             <tbody
-                                className={`border`}>{this.renderCampaigns(campaigns, (c) => !c.isActive && !c.isCompleted)}</tbody>
+                                className={``}>{this.renderCampaigns(campaigns, (c) => !c.isActive && !c.isCompleted)}</tbody>
                         </table>
                     </section>
                     <section className={`row control-panel`}>
@@ -331,30 +431,72 @@ class App extends Component {
                         </header>
                         <div className="d-flex w-100 justify-content-between mb-2 gap-5">
                             <button
-                                className="btn btn-light border w-100"
+                                className={`btn w-100 ${this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase() 
+                                    ? 'btn-light' : 'btn-light disabled'}`}
                                 onClick={async () => await this.withdrawFees()}
                             >
                                 Withdraw
                             </button>
                             <div className="w-100">
-                                <input
-                                    type="text" className="form-control" placeholder="New owner's wallet address" id={'newOwner'}/>
+                                {
+                                    this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()
+                                        ?
+                                        <input
+                                            type="text"
+                                            className={'form-control'}
+                                            placeholder="New owner's wallet address"
+                                            id={'newOwner'}
+                                        />
+                                        :
+                                        <input
+                                            type="text"
+                                            className={'form-control'}
+                                            placeholder="New owner's wallet address"
+                                            id={'newOwner'}
+                                            disabled
+                                        />
+                                }
                                 <button
-                                    className="btn btn-dark mt-2 w-100"
+                                    className={`btn w-100 mt-2 ${this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()
+                                        ? 'btn-dark' : 'btn-dark disabled'}`}
+                                    // className="btn btn-dark mt-2 w-100"
                                     onClick={async () => await contract.methods.changeOwner(document.getElementById('newOwner').value).send({from: this.state.currentAccount})}
                                 >
                                     Change Owner
                                 </button>
                             </div>
                             <div className="w-100">
-                                <input type="text" className="form-control" placeholder="Entrepreneur's address"/>
+                                {
+                                    this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()
+                                        ?
+                                        <input
+                                            type="text"
+                                            className={'form-control'}
+                                            placeholder="Entrepreneur's address"
+                                        />
+                                        :
+                                        <input
+                                            type="text"
+                                            className={'form-control'}
+                                            placeholder="Entrepreneur's address"
+                                            disabled
+                                        />
+                                }
                                 <button
-                                    className="btn btn-danger mt-2 w-100"
+                                    className={`btn w-100 mt-2 ${this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()
+                                        ? 'btn-danger' : 'btn-danger disabled'}`}
                                     onClick={async () => await contract.methods.banEntrepreneur().send({from: this.state.currentAccount})}
                                 >
                                     Ban Entrepreneur
                                 </button>
                             </div>
+                            <button
+                                className={`btn w-100 ${this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()
+                                    ? 'btn-danger' : 'btn-danger disabled'}`}
+                                onClick={async () => await this.withdrawFees()}
+                            >
+                                Destroy Contract
+                            </button>
                         </div>
                     </section>
                 </main>
