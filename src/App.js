@@ -17,6 +17,8 @@ class App extends Component {
         newOwner: '',
         hasRefunds: false,
         eventsTriggered: false,
+        sharesPerBacker: [],
+        isContractActive: false,
     };
 
     updateInfo = async () => {
@@ -126,6 +128,7 @@ class App extends Component {
     // Check if there are refunds available
     checkRefunds = async (account) => {
         const refunds = await contract.methods.refunds(account).call();
+        console.log("Refunds", refunds);
         this.setState({hasRefunds: refunds > 0});
     };
 
@@ -133,21 +136,28 @@ class App extends Component {
     loadCampaigns = async () => {
         const campaignCount = await contract.methods.getCampaignCounter().call();
         const campaigns = [];
+        const sharesPerBacker = [];
 
         for (let i = 0; i < campaignCount; i++) {
             const campaign = await contract.methods.campaigns(i).call();
             campaigns.push({...campaign, id: i});
+            const userPledges = await contract.methods.getSharesPerBacker(i, this.state.currentAccount).call();
+            console.log("User Pledges", userPledges);
+            const sharesPerBackerObject = {
+                sharesPerBacker: userPledges,
+                campaignId: i
+            }
+            sharesPerBacker.push(sharesPerBackerObject);
         }
-
+        const isContractActive = await contract.methods.getIsContractActive().call();
+        this.setState({sharesPerBacker});
         this.setState({campaigns});
+        this.setState({isContractActive});
     };
 
     // Create a new campaign
     createCampaign = async (newCampaign) => {
-        console.log("State", this.state);
-        console.log("New Campaign", newCampaign);
         const {title, pledgeCost, numberOfPledges} = newCampaign;
-        console.log('Creating campaign in:', title, pledgeCost, numberOfPledges);
 
         try {
             await contract.methods
@@ -219,7 +229,7 @@ class App extends Component {
                 .refundInvestor(currentAccount)
                 .send({from: currentAccount});
 
-            alert(`Refund successful for investor: ${currentAccount}`);
+            // alert(`Refund successful for investor: ${currentAccount}`);
             this.setState({investorAddress: "", message: ""});
 
             await this.checkRefunds(currentAccount);
@@ -232,56 +242,68 @@ class App extends Component {
 
 
     renderCampaigns = (campaigns, filter) => {
+        const { currentAccount } = this.state;
+
         return campaigns
             .filter(filter)
-            .map((campaign) => (
-                <tr key={campaign.id}>
-                    <td>{campaign.entrepreneur}</td>
-                    <td>{campaign.title}</td>
-                    <td>{web3.utils.fromWei(campaign.sharePrice, 'ether')}</td>
-                    <td>{campaign.currentShares}/{campaign.totalShares}</td>
-                    <td>{campaign.isActive ? 'Active' : campaign.isCompleted ? 'Completed' : 'Canceled'}</td>
-                    {
-                        (!campaign.isCancelled && !campaign.isCompleted) &&
-                        <td className={`d-flex gap-2 h-auto`}>
-                            {
-                                campaign.isActive &&
-                                <button
-                                    className="btn btn-success btn-sm"
-                                    onClick={async () => await this.pledge(campaign.id, campaign.sharePrice)}
-                                >
-                                    Pledge
-                                </button>
-                            }
-                            {
-                                (campaign.isActive &&
-                                    (campaign.entrepreneur.toLowerCase() === this.state.currentAccount.toLowerCase() ||
-                                        this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase())) &&
-                                <button
-                                    className="btn btn-danger btn-sm"
-                                    onClick={async () => await this.cancelCampaign(campaign.id)}
-                                >
-                                    Cancel
-                                </button>
-                            }
-                            {
-                                (campaign.isActive &&
-                                    (campaign.currentShares >= campaign.totalShares) &&
-                                        (campaign.entrepreneur.toLowerCase() === this.state.currentAccount.toLowerCase() ||
-                                            this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()))
-                                &&
-                                <button
-                                    className="btn btn-info btn-sm"
-                                    onClick={async () => await this.completeCampaign(campaign.id)}
-                                >
-                                    Fulfill
-                                </button>
-                            }
-                        </td>
-                    }
-                </tr>
-            ));
+            .map((campaign) => {
+                // Fetch the user's pledges for this campaign
+                // const userPledges = await contract.methods.getSharesPerBacker(campaign.id, currentAccount).call();
+
+                return (
+                    <tr key={campaign.id}>
+                        <td>{campaign.entrepreneur}</td>
+                        <td>{campaign.title}</td>
+                        <td>{web3.utils.fromWei(campaign.sharePrice, 'ether')}</td>
+                        <td>{campaign.totalShares - campaign.currentShares > 0 ? `${campaign.totalShares - campaign.currentShares}` : '0'}</td>
+                        <td>{this.state.sharesPerBacker.filter(
+                            (s) => s.campaignId === campaign.id).map((s) => s.sharesPerBacker
+                        )}</td>
+                        <td>{campaign.isActive ? 'Active' : campaign.isCompleted ? 'Completed' : 'Canceled'}</td>
+                        {
+                            (!campaign.isCancelled && !campaign.isCompleted) &&
+                            <td className={`d-flex gap-2 h-auto`}>
+                                {
+                                    campaign.isActive &&
+                                    <button
+                                        className="btn btn-success btn-sm"
+                                        onClick={async () => await this.pledge(campaign.id, campaign.sharePrice)}
+                                    >
+                                        Pledge
+                                    </button>
+                                }
+                                {
+                                    (campaign.isActive &&
+                                        (campaign.entrepreneur.toLowerCase() === currentAccount.toLowerCase() ||
+                                            this.state.owner.toLowerCase() === currentAccount.toLowerCase())) &&
+                                    <button
+                                        className="btn btn-danger btn-sm"
+                                        onClick={async () => await this.cancelCampaign(campaign.id)}
+                                    >
+                                        Cancel
+                                    </button>
+                                }
+                                {
+                                    (campaign.isActive &&
+                                        (campaign.currentShares >= campaign.totalShares) &&
+                                        (campaign.entrepreneur.toLowerCase() === currentAccount.toLowerCase() ||
+                                            this.state.owner.toLowerCase() === currentAccount.toLowerCase()))
+                                    &&
+                                    <button
+                                        className="btn btn-info btn-sm"
+                                        onClick={async () => await this.completeCampaign(campaign.id)}
+                                    >
+                                        Fulfill
+                                    </button>
+                                }
+                            </td>
+                        }
+                    </tr>
+                );
+            });
     };
+
+
 
     withdrawFees = async () => {
         try {
@@ -296,13 +318,27 @@ class App extends Component {
         }
     }
 
+    destroyContract = async () => {
+        try {
+            await contract.methods
+                .destroyContract()
+                .send({
+                    from: this.state.currentAccount,
+                });
+            this.setState({isContractActive: true});
+            await this.loadCampaigns();
+        } catch (error) {
+            console.error("Error destroying contract:", error);
+        }
+    }
+
     render() {
-        console.log(this.state);
+        console.log("State in render", this.state);
         const {currentAccount, owner, balance, collectedFees, campaigns} = this.state;
 
         const currentAccountShortened = currentAccount ? `${currentAccount.slice(0, 6)}...${currentAccount.slice(-4)}` : '';
         return (
-            <div className="max-vh-100">
+            <div className="vh-100">
                 <nav
                     className="navbar navbar-expand-lg text-white p-2 d-flex top-nav align-items-center justify-content-between">
                     <header className={`pink-white`}>
@@ -332,7 +368,7 @@ class App extends Component {
                 </nav>
                 <main className={'row p-5 gap-5'}>
                     {
-                        this.state.currentAccount.toLowerCase() !== this.state.owner.toLowerCase() &&
+                        ((this.state.currentAccount.toLowerCase() !== this.state.owner.toLowerCase()) && this.state.isContractActive) &&
                             <section className={`col-md-auto create-campaign`}>
                                 <header className={`text-center`}>
                                     <h2 className={`fs-4 gradient-text`}>Campaign Creation</h2>
@@ -377,7 +413,8 @@ class App extends Component {
                                 <th>Entrepreneur</th>
                                 <th>Title</th>
                                 <th>Price (ETH)</th>
-                                <th>Shares (Pledged/Total)</th>
+                                <th>Pledges Left</th>
+                                <th>Your Pledges</th>
                                 <th>Status</th>
                                 <th>Actions</th>
                             </tr>
@@ -393,7 +430,8 @@ class App extends Component {
                                 <th>Entrepreneur</th>
                                 <th>Title</th>
                                 <th>Price (ETH)</th>
-                                <th>Shares (Pledged/Total)</th>
+                                <th>Pledges Left</th>
+                                <th>Your Pledges</th>
                                 <th>Status</th>
                             </tr>
                             </thead>
@@ -416,7 +454,8 @@ class App extends Component {
                                 <th>Entrepreneur</th>
                                 <th>Title</th>
                                 <th>Price (ETH)</th>
-                                <th>Shares (Pledged/Total)</th>
+                                <th>Pledges Left</th>
+                                <th>Your Pledges</th>
                                 <th>Status</th>
                             </tr>
                             </thead>
@@ -431,7 +470,7 @@ class App extends Component {
                         </header>
                         <div className="d-flex w-100 justify-content-between mb-2 gap-5">
                             <button
-                                className={`btn w-100 ${this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase() 
+                                className={`btn w-100 ${this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase() && this.state.isContractActive
                                     ? 'btn-light' : 'btn-light disabled'}`}
                                 onClick={async () => await this.withdrawFees()}
                             >
@@ -439,7 +478,7 @@ class App extends Component {
                             </button>
                             <div className="w-100">
                                 {
-                                    this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()
+                                    this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase() && this.state.isContractActive
                                         ?
                                         <input
                                             type="text"
@@ -457,7 +496,7 @@ class App extends Component {
                                         />
                                 }
                                 <button
-                                    className={`btn w-100 mt-2 ${this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()
+                                    className={`btn w-100 mt-2 ${(this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()) && this.state.isContractActive
                                         ? 'btn-dark' : 'btn-dark disabled'}`}
                                     // className="btn btn-dark mt-2 w-100"
                                     onClick={async () => await contract.methods.changeOwner(document.getElementById('newOwner').value).send({from: this.state.currentAccount})}
@@ -467,12 +506,13 @@ class App extends Component {
                             </div>
                             <div className="w-100">
                                 {
-                                    this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()
+                                    this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase() && this.state.isContractActive
                                         ?
                                         <input
                                             type="text"
                                             className={'form-control'}
                                             placeholder="Entrepreneur's address"
+                                            id={'bannedEntrepreneur'}
                                         />
                                         :
                                         <input
@@ -480,20 +520,23 @@ class App extends Component {
                                             className={'form-control'}
                                             placeholder="Entrepreneur's address"
                                             disabled
+                                            id={'bannedEntrepreneur'}
                                         />
                                 }
                                 <button
-                                    className={`btn w-100 mt-2 ${this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()
+                                    className={`btn w-100 mt-2 ${(this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()) && this.state.isContractActive
                                         ? 'btn-danger' : 'btn-danger disabled'}`}
-                                    onClick={async () => await contract.methods.banEntrepreneur().send({from: this.state.currentAccount})}
+                                    onClick={async () => await contract.methods.banInvestor(
+                                        document.getElementById('bannedEntrepreneur').value
+                                    ).send({from: this.state.currentAccount})}
                                 >
                                     Ban Entrepreneur
                                 </button>
                             </div>
                             <button
-                                className={`btn w-100 ${this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()
+                                className={`btn w-100 ${(this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()) && this.state.isContractActive
                                     ? 'btn-danger' : 'btn-danger disabled'}`}
-                                onClick={async () => await this.withdrawFees()}
+                                onClick={async () => await this.destroyContract()}
                             >
                                 Destroy Contract
                             </button>
