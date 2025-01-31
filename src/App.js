@@ -19,6 +19,8 @@ class App extends Component {
         eventsTriggered: false,
         sharesPerBacker: [],
         isContractActive: false,
+        windowSize: 0,
+        isSecondAdmin: false,
     };
 
     updateInfo = async () => {
@@ -34,6 +36,7 @@ class App extends Component {
             owner,
             balance: web3.utils.fromWei(balance, 'ether'),
             collectedFees: web3.utils.fromWei(collectedFees, 'ether'),
+            isSecondAdmin: accounts[0] === '0x153dfef4355E823dCB0FCc76Efe942BefCa86477'
         });
 
         window.ethereum.on('accountsChanged', this.handleAccountChange);
@@ -56,69 +59,74 @@ class App extends Component {
 
     setupEventListeners() {
         // Listen for account change
-        window.ethereum.on('accountsChanged', async(accounts) => {
+        window.ethereum.on('accountsChanged', async (accounts) => {
             this.setState({currentAccount: accounts[0]});
             await this.checkRefunds(accounts[0]);
             await this.loadCampaigns();
         });
 
         // Listen for campaign creation
-        contract.events.CampaignCreated().on('data',async (data) => {
+        contract.events.CampaignCreated().on('data', async (data) => {
             console.log('New campaign created:', data);
             await this.updateInfo();
         });
 
         // Listen for campaign funding
-        contract.events.SharesPurchased().on('data',async (data) => {
+        contract.events.SharesPurchased().on('data', async (data) => {
             console.log('Shares purchased:', data);
             await this.updateInfo();
         });
 
         // Listen for campaign cancellation
-        contract.events.CampaignCancelled().on('data',async (data) => {
+        contract.events.CampaignCancelled().on('data', async (data) => {
             console.log('Campaign cancelled:', data);
             await this.updateInfo();
         });
 
         // Listen for campaign completion
-        contract.events.CampaignCompleted().on('data',async (data) => {
+        contract.events.CampaignCompleted().on('data', async (data) => {
             console.log('Campaign completed:', data);
             await this.updateInfo();
         });
 
         // Listen for refund
-        contract.events.InvestorRefunded().on('data',async (data) => {
+        contract.events.InvestorRefunded().on('data', async (data) => {
             console.log('Refund:', data);
             await this.updateInfo();
         });
 
         // Listen for fee withdrawal
-        contract.events.FeesWithdrawn().on('data',async (data) => {
+        contract.events.FeesWithdrawn().on('data', async (data) => {
             console.log('Fees withdrawn:', data);
             await this.updateInfo();
         });
 
         // Listen for owner change
-        contract.events.ChangeOwner().on('data',async (data) => {
+        contract.events.ChangeOwner().on('data', async (data) => {
             console.log('Owner changed:', data);
             await this.updateInfo();
         });
 
         // Listen for entrepreneur ban
-        contract.events.BanEntrepreneur().on('data',async (data) => {
+        contract.events.BanEntrepreneur().on('data', async (data) => {
             console.log('Entrepreneur banned:', data);
             await this.updateInfo();
         });
 
         // Listen for contract destruction
-        contract.events.DestroyContract().on('data',async (data) => {
+        contract.events.DestroyContract().on('data', async (data) => {
             console.log('Contract destroyed:', data);
             await this.updateInfo();
+        });
+
+        // Set up a listener for screen size changes
+        window.addEventListener('resize', () => {
+            this.setState({windowSize: window.innerWidth});
         });
     }
 
     // Handle account change
-    handleAccountChange = async() => {
+    handleAccountChange = async () => {
         const accounts = await window.ethereum.request({method: 'eth_requestAccounts'});
         this.setState({currentAccount: accounts[0]});
         await this.checkRefunds(accounts[0]);
@@ -128,7 +136,6 @@ class App extends Component {
     // Check if there are refunds available
     checkRefunds = async (account) => {
         const refunds = await contract.methods.refunds(account).call();
-        console.log("Refunds", refunds);
         this.setState({hasRefunds: refunds > 0});
     };
 
@@ -164,7 +171,7 @@ class App extends Component {
                 .createCampaign(title, Number(pledgeCost), Number(numberOfPledges))
                 .send({
                     from: this.state.currentAccount,
-                    value: "1",
+                    value: 20000000000000000,
                 });
             await this.loadCampaigns();
         } catch (error) {
@@ -242,7 +249,7 @@ class App extends Component {
 
 
     renderCampaigns = (campaigns, filter) => {
-        const { currentAccount } = this.state;
+        const {currentAccount} = this.state;
 
         return campaigns
             .filter(filter)
@@ -254,7 +261,7 @@ class App extends Component {
                     <tr key={campaign.id}>
                         <td>{campaign.entrepreneur}</td>
                         <td>{campaign.title}</td>
-                        <td>{web3.utils.fromWei(campaign.sharePrice, 'ether')}</td>
+                        <td>{web3.utils.fromWei(20000000000000000, 'wei')}</td>
                         <td>{campaign.totalShares - campaign.currentShares > 0 ? `${campaign.totalShares - campaign.currentShares}` : '0'}</td>
                         <td>{this.state.sharesPerBacker.filter(
                             (s) => s.campaignId === campaign.id).map((s) => s.sharesPerBacker
@@ -275,7 +282,8 @@ class App extends Component {
                                 {
                                     (campaign.isActive &&
                                         (campaign.entrepreneur.toLowerCase() === currentAccount.toLowerCase() ||
-                                            this.state.owner.toLowerCase() === currentAccount.toLowerCase())) &&
+                                            this.state.owner.toLowerCase() === currentAccount.toLowerCase() ||
+                                            this.state.isSecondAdmin)) &&
                                     <button
                                         className="btn btn-danger btn-sm"
                                         onClick={async () => await this.cancelCampaign(campaign.id)}
@@ -287,7 +295,8 @@ class App extends Component {
                                     (campaign.isActive &&
                                         (campaign.currentShares >= campaign.totalShares) &&
                                         (campaign.entrepreneur.toLowerCase() === currentAccount.toLowerCase() ||
-                                            this.state.owner.toLowerCase() === currentAccount.toLowerCase()))
+                                            this.state.owner.toLowerCase() === currentAccount.toLowerCase() ||
+                                            this.state.isSecondAdmin))
                                     &&
                                     <button
                                         className="btn btn-info btn-sm"
@@ -302,7 +311,6 @@ class App extends Component {
                 );
             });
     };
-
 
 
     withdrawFees = async () => {
@@ -333,19 +341,21 @@ class App extends Component {
     }
 
     render() {
-        console.log("State in render", this.state);
         const {currentAccount, owner, balance, collectedFees, campaigns} = this.state;
 
         const currentAccountShortened = currentAccount ? `${currentAccount.slice(0, 6)}...${currentAccount.slice(-4)}` : '';
         return (
-            <div className="vh-100">
+            <div className="min-vh-100 overflow-x-hidden">
                 <nav
-                    className="navbar navbar-expand-lg text-white p-2 d-flex top-nav align-items-center justify-content-between">
+                    className="responsive-header navbar navbar-expand-lg text-white py-3 px-5 d-flex top-nav align-items-center justify-content-between w-100">
                     <header className={`pink-white`}>
                         <h2 className="gradient-text">Crypto Crowdfunding</h2>
                         <h5 className={'fs-6'}>A Web3 Implementation for the Course of Blockchain</h5>
                     </header>
-                    <ul className={"text-white navbar-nav gap-4"}>
+                    <div>
+
+                    </div>
+                    <ul className={"custom-nav text-white navbar-nav gap-4"}>
                         {
                             navItems.map((item, index) => (
                                 <div className={`d-flex flex-column gap-1 align-items-center nav-text`} key={index}>
@@ -366,46 +376,85 @@ class App extends Component {
                         <div>{currentAccountShortened}</div>
                     </section>
                 </nav>
-                <main className={'row p-5 gap-5'}>
+                <main className={'row p-5 gap-5 w-100'}>
                     {
-                        ((this.state.currentAccount.toLowerCase() !== this.state.owner.toLowerCase()) && this.state.isContractActive) &&
-                            <section className={`col-md-auto create-campaign`}>
-                                <header className={`text-center`}>
-                                    <h2 className={`fs-4 gradient-text`}>Campaign Creation</h2>
-                                    <h4 className={`fs-6 white`}>Create your own campaign in seconds</h4>
-                                </header>
-                                <form className={`d-flex flex-column align-items-center`} onSubmit={
-                                    async (e) => {
-                                        e.preventDefault();
-                                        const newCampaign = {
-                                            title: document.getElementById('title').value,
-                                            pledgeCost: document.getElementById('pledgeCost').value,
-                                            numberOfPledges: document.getElementById('numOfPledges').value
-                                        };
-                                        console.log('Creating campaign:', newCampaign);
+                        (this.state.currentAccount.toLowerCase() !== this.state.owner.toLowerCase()
+                            && this.state.isContractActive) &&
+                        <section className={`col-md-auto create-campaign`}>
+                            <header className={`text-center`}>
+                                <h2 className={`fs-4 gradient-text`}>Campaign Creation</h2>
+                                <h4 className={`fs-6 white`}>Create your own campaign in seconds</h4>
+                            </header>
+                            <form className={`d-flex flex-column align-items-center`} onSubmit={
+                                async (e) => {
+                                    e.preventDefault();
+                                    const newCampaign = {
+                                        title: document.getElementById('title').value,
+                                        pledgeCost: document.getElementById('pledgeCost').value,
+                                        numberOfPledges: document.getElementById('numOfPledges').value
+                                    };
+                                    console.log('Creating campaign:', newCampaign);
 
-                                        this.setState({newCampaign});
+                                    this.setState({newCampaign});
 
-                                        await this.createCampaign(newCampaign);
-                                    }
-                                }>
-                                    <div className="mb-3">
-                                        <label htmlFor="exampleInputEmail1" className="form-label">Title</label>
-                                        <input type="text" className="form-control" id="title" placeholder={'Campaign 1'}/>
-                                    </div>
-                                    <div className="mb-3">
-                                        <label htmlFor="pledgeCost" className="form-label">Pledge Cost</label>
-                                        <input type="text" className="form-control" id="pledgeCost" placeholder={"10000"}/>
-                                    </div>
-                                    <div className="mb-3">
-                                        <label htmlFor="numOfPledges" className="form-label">Number of Pledges</label>
-                                        <input type="text" className="form-control" id="numOfPledges" placeholder={"200"}/>
-                                    </div>
-                                    <button type="submit" className="btn btn-light">Create</button>
-                                </form>
-                            </section>
+                                    await this.createCampaign(newCampaign);
+                                }
+                            }>
+                                <div className="mb-3">
+                                    <label htmlFor="exampleInputEmail1" className="form-label">Title</label>
+                                    <input type="text" className="form-control" id="title" placeholder={'Campaign 1'}/>
+                                </div>
+                                <div className="mb-3">
+                                    <label htmlFor="pledgeCost" className="form-label">Pledge Cost</label>
+                                    <input type="text" className="form-control" id="pledgeCost" placeholder={"10000"}/>
+                                </div>
+                                <div className="mb-3">
+                                    <label htmlFor="numOfPledges" className="form-label">Number of Pledges</label>
+                                    <input type="text" className="form-control" id="numOfPledges" placeholder={"200"}/>
+                                </div>
+                                <button type="submit" className="btn btn-light">Create</button>
+                            </form>
+                        </section>
                     }
-                    <section className={'col custom-table'}>
+                    {
+                        (this.state.isSecondAdmin && this.state.isContractActive) &&
+                        <section className={`col-md-auto create-campaign`}>
+                            <header className={`text-center`}>
+                                <h2 className={`fs-4 gradient-text`}>Campaign Creation</h2>
+                                <h4 className={`fs-6 white`}>Create your own campaign in seconds</h4>
+                            </header>
+                            <form className={`d-flex flex-column align-items-center`} onSubmit={
+                                async (e) => {
+                                    e.preventDefault();
+                                    const newCampaign = {
+                                        title: document.getElementById('title').value,
+                                        pledgeCost: document.getElementById('pledgeCost').value,
+                                        numberOfPledges: document.getElementById('numOfPledges').value
+                                    };
+                                    console.log('Creating campaign:', newCampaign);
+
+                                    this.setState({newCampaign});
+
+                                    await this.createCampaign(newCampaign);
+                                }
+                            }>
+                                <div className="mb-3">
+                                    <label htmlFor="exampleInputEmail1" className="form-label">Title</label>
+                                    <input type="text" className="form-control" id="title" placeholder={'Campaign 1'}/>
+                                </div>
+                                <div className="mb-3">
+                                    <label htmlFor="pledgeCost" className="form-label">Pledge Cost</label>
+                                    <input type="text" className="form-control" id="pledgeCost" placeholder={"10000"}/>
+                                </div>
+                                <div className="mb-3">
+                                    <label htmlFor="numOfPledges" className="form-label">Number of Pledges</label>
+                                    <input type="text" className="form-control" id="numOfPledges" placeholder={"200"}/>
+                                </div>
+                                <button type="submit" className="btn btn-light">Create</button>
+                            </form>
+                        </section>
+                    }
+                    <section className={'overflow-x-scroll col custom-table'}>
                         <h3 className={'pink-white'}>Live Campaigns</h3>
                         <table className="table table-dark table-hover">
                             <thead>
@@ -463,22 +512,34 @@ class App extends Component {
                                 className={``}>{this.renderCampaigns(campaigns, (c) => !c.isActive && !c.isCompleted)}</tbody>
                         </table>
                     </section>
-                    <section className={`row control-panel`}>
+                    <section className={`control-panel`}>
                         <header>
                             <h3 className={`pink-white`}>Control Panel</h3>
                             <h6 className={`text-white-50`}>Only Contract Owner can perform these actions</h6>
                         </header>
                         <div className="d-flex w-100 justify-content-between mb-2 gap-5">
-                            <button
-                                className={`btn w-100 ${this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase() && this.state.isContractActive
-                                    ? 'btn-light' : 'btn-light disabled'}`}
-                                onClick={async () => await this.withdrawFees()}
-                            >
-                                Withdraw
-                            </button>
+                            {
+                                this.state.isSecondAdmin
+                                    ?
+                                    <button
+                                        className={`btn w-100 btn-light`}
+                                        onClick={async () => await this.withdrawFees()}
+                                    >
+                                        Withdraw
+                                    </button>
+                                    :
+                                    <button
+                                        className={`btn w-100 ${(this.state.currentAccount.toLowerCase() === this.state.owner.toLowerCase() && this.state.isContractActive
+                                            ? 'btn-light' : 'btn-light disabled')}`}
+                                        onClick={async () => await this.withdrawFees()}
+                                    >
+                                        Withdraw
+                                    </button>
+                            }
                             <div className="w-100">
                                 {
-                                    this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase() && this.state.isContractActive
+                                    (this.state.currentAccount.toLowerCase() === this.state.owner.toLowerCase() ||
+                                        this.state.isSecondAdmin) && this.state.isContractActive
                                         ?
                                         <input
                                             type="text"
@@ -496,7 +557,8 @@ class App extends Component {
                                         />
                                 }
                                 <button
-                                    className={`btn w-100 mt-2 ${(this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()) && this.state.isContractActive
+                                    className={`btn w-100 mt-2 ${(this.state.currentAccount.toLowerCase() === this.state.owner.toLowerCase() ||
+                                        this.state.isSecondAdmin) && this.state.isContractActive
                                         ? 'btn-dark' : 'btn-dark disabled'}`}
                                     // className="btn btn-dark mt-2 w-100"
                                     onClick={async () => await contract.methods.changeOwner(document.getElementById('newOwner').value).send({from: this.state.currentAccount})}
@@ -506,7 +568,8 @@ class App extends Component {
                             </div>
                             <div className="w-100">
                                 {
-                                    this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase() && this.state.isContractActive
+                                    (this.state.currentAccount.toLowerCase() === this.state.owner.toLowerCase() ||
+                                        this.state.isSecondAdmin) && this.state.isContractActive
                                         ?
                                         <input
                                             type="text"
@@ -524,7 +587,8 @@ class App extends Component {
                                         />
                                 }
                                 <button
-                                    className={`btn w-100 mt-2 ${(this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()) && this.state.isContractActive
+                                    className={`btn w-100 mt-2 ${(this.state.currentAccount.toLowerCase() === this.state.owner.toLowerCase() ||
+                                        this.state.isSecondAdmin) && this.state.isContractActive
                                         ? 'btn-danger' : 'btn-danger disabled'}`}
                                     onClick={async () => await contract.methods.banInvestor(
                                         document.getElementById('bannedEntrepreneur').value
@@ -534,7 +598,8 @@ class App extends Component {
                                 </button>
                             </div>
                             <button
-                                className={`btn w-100 ${(this.state.owner.toLowerCase() === this.state.currentAccount.toLowerCase()) && this.state.isContractActive
+                                className={`btn w-100 ${(this.state.currentAccount.toLowerCase() === this.state.owner.toLowerCase() ||
+                                    this.state.isSecondAdmin) && this.state.isContractActive
                                     ? 'btn-danger' : 'btn-danger disabled'}`}
                                 onClick={async () => await this.destroyContract()}
                             >

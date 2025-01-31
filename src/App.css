@@ -2,6 +2,13 @@
     width: fit-content;
 }
 
+@media(min-height: 1000px) {
+    :root {
+        font-size: 110%; /* Increases the base font size by 20% */
+    }
+}
+
+
 body {
     background: rgb(67,64,125);
     background: linear-gradient(90deg, rgba(67,64,125,1) 0%, rgba(96,0,110,1) 100%, rgba(177,82,174,1) 100%);
